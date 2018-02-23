@@ -13,9 +13,9 @@ import h5py
 import time
 
 cdll.LoadLibrary(os.environ['CUDA_PATH_V9_0'] + '\\bin\\cudart64_90.dll') # This is needed by the DLL containing CUDA code.
-GPUdll = cdll.LoadLibrary('A:\\GitHub\\GPU_acc_recon\\x64\\Debug\\GPU_acc_recon.dll')
+GPUdll = cdll.LoadLibrary('GPU_acc_recon.dll')
 
-datapath = r'A:\GitHub\GPU_acc_recon\Test_data\04_pr.hdf5'
+datapath = r'Test_data\04_pr.hdf5'
 
 datafile = h5py.File(datapath, 'r')
 data = np.array(datafile['data'][:])
@@ -28,7 +28,7 @@ coeff_rows = c_int(0);
 coeff_cols = c_int(0);
 
 pattern_arr = c_float*4
-pattern = pattern_arr(0.0, 0.0, 16.0, 16.0)
+pattern = pattern_arr(0.0, 0.0, 16.0, 16.0) 
 
 sigma = 3.2
 
@@ -49,7 +49,7 @@ res = np.zeros(dtype=np.float32, shape=(data_slices, coeff_rows.value, coeff_col
 p_resptrarr = []
 for ptr in np.arange(0, data_slices):
     resptr = res[ptr].ctypes.data_as(POINTER(c_ubyte))
-    p_resptrarr.append(resptr);
+    p_resptrarr.append(resptr)
 c_resptrarr = (POINTER(c_ubyte)*data_slices)(*p_resptrarr)
 
 elapsed = c_float(0)
@@ -58,12 +58,11 @@ dataptr_arr = POINTER(c_ubyte)*data_slices
 p_dataptrarr = []
 for ptr in np.arange(0, data_slices):
     dataptr = data[ptr].ctypes.data_as(POINTER(c_ubyte))
-    p_dataptrarr.append(dataptr);
+    p_dataptrarr.append(dataptr)
 c_dataptrarr = (POINTER(c_ubyte)*data_slices)(*p_dataptrarr)
 
-t = time.time()
-GPUdll.extract_signal_3D(c_int(data_rows), c_int(data_cols), c_int(data_slices), byref(c_dataptrarr), ss_row_ptr, ss_col_ptr, pinv_im_ptr, byref(c_resptrarr), byref(elapsed))
-elapsed = time.time() - t
+GPUdll.extract_signal_stack(c_int(data_rows), c_int(data_cols), c_int(data_slices), byref(c_dataptrarr), ss_row_ptr, ss_col_ptr, pinv_im_ptr, byref(c_resptrarr), byref(elapsed))
+
 
 plt.imshow(data[1], 'gray')
 plt.figure()

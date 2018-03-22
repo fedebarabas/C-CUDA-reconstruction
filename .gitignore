@@ -10,6 +10,7 @@
 *.sln.docstates
 *.hdf5
 *.h5
+*.tif
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs

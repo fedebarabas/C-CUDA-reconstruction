@@ -41,10 +41,11 @@ int main() {
 	const int im_cols = image1.cols;
 	const int im_slices = sizeof(data_ptrs) / sizeof(data_ptrs[0]);
 
-	float pattern[4] = { 0.0f, 0.0f, 16.0f, 16.0f };
+	float pattern[4] = { 8.8875f, 7.3525f, 11.53525f, 11.5224f };
 	
+	float sigmas[2] = { 1.68, 1000 };
+
 	const int nr_bases = 2;
-	float sigmas[nr_bases] = { 3.2, 20.0f };
 
 	int grid_rows, grid_cols;
 	calc_coeff_grid_size(im_rows, im_cols, &grid_rows, &grid_cols, pattern);	
@@ -84,12 +85,12 @@ int main() {
 	}
 	coeffs_ptrs[q] = base2_coeffs;
 
-	Reconstruction reconstruction(im_rows, im_cols, im_slices, nr_bases, pattern, sigmas, data_ptrs, coeffs_ptrs);
+	Reconstruction reconstruction(im_rows, im_cols, im_slices, pattern, nr_bases, sigmas, data_ptrs, coeffs_ptrs);
 
 	reconstruction.make_subsquares();
 	reconstruction.make_bases_im();
 	reconstruction.make_pinv_im();
-	reconstruction.extract_signal();
+	reconstruction.extract_signal_CPU();
 	
 	if (reconstruction.cudaStatus == cudaSuccess)
 		printf("Cuda success!\n");
@@ -113,13 +114,24 @@ LIBDLL void calc_coeff_grid_size(int im_rows, int im_cols, int* grid_rows, int* 
 }
 
 
-LIBDLL void extract_signal(int im_rows, int im_cols, int im_slices, float* pattern, int nr_bases, float* sigmas, uchar** data_ptrs, uchar*** coeffs_ptrs) {
+LIBDLL void extract_signal_GPU(int im_rows, int im_cols, int im_slices, float* pattern, int nr_bases, float* sigmas, uchar** data_ptrs, uchar*** coeffs_ptrs) {
 
-	Reconstruction reconstruction(im_rows, im_cols, im_slices, nr_bases, pattern, sigmas, data_ptrs, coeffs_ptrs);
+	Reconstruction reconstruction(im_rows, im_cols, im_slices, pattern, nr_bases, sigmas, data_ptrs, coeffs_ptrs);
 
 	reconstruction.make_subsquares();
 	reconstruction.make_bases_im();
 	reconstruction.make_pinv_im();
-	reconstruction.extract_signal();
+	reconstruction.extract_signal_GPU();
+
+}
+
+LIBDLL void extract_signal_CPU(int im_rows, int im_cols, int im_slices, float* pattern, int nr_bases, float* sigmas, uchar** data_ptrs, uchar*** coeffs_ptrs) {
+
+	Reconstruction reconstruction(im_rows, im_cols, im_slices, pattern, nr_bases, sigmas, data_ptrs, coeffs_ptrs);
+
+	reconstruction.make_subsquares();
+	reconstruction.make_bases_im();
+	reconstruction.make_pinv_im();
+	reconstruction.extract_signal_CPU();
 
 }

@@ -82,9 +82,13 @@ __global__ void GPU_signal_extraction(uchar* dev_data,
 
 
 //CLASS FUNCTIONS-------------
-Reconstruction::Reconstruction(const int in_im_rows, const int in_im_cols, const int in_im_slices, const int in_nr_bases, float* in_pattern, float* in_sigma, uchar** rawdata_ptr, vector<vector<Mat>>* in_coeffs_mats)
+Reconstruction::Reconstruction(const int in_im_rows, const int in_im_cols, const int in_im_slices, float* in_pattern, const int in_nr_bases, float* in_sigmas, uchar** rawdata_ptr, vector<vector<Mat>>* in_coeffs_mats)
 	: im_rows(in_im_rows), im_cols(in_im_cols), im_slices(in_im_slices), nr_bases(in_nr_bases)
 {
+	for (int i = 0; i < this->nr_bases; i++) {
+		this->sigmas.push_back(in_sigmas[i]);
+	}
+
 	this->pattern[0] = in_pattern[0];
 	this->pattern[1] = in_pattern[1];
 	this->pattern[2] = in_pattern[2];
@@ -95,9 +99,16 @@ Reconstruction::Reconstruction(const int in_im_rows, const int in_im_cols, const
 	this->raw_data_ptr = rawdata_ptr;
 }
 
-Reconstruction::Reconstruction(const int in_im_rows, const int in_im_cols, const int in_im_slices, const int in_nr_bases, float* in_pattern, float* in_sigmas, uchar** rawdata_ptr, uchar*** in_coeffs_ptrs)
+Reconstruction::Reconstruction(const int in_im_rows, const int in_im_cols, const int in_im_slices, float* in_pattern, const int in_nr_bases, float* in_sigmas, uchar** rawdata_ptr, uchar*** in_coeffs_ptrs)
 	:im_rows(in_im_rows), im_cols(in_im_cols), im_slices(in_im_slices), nr_bases(in_nr_bases)
 {
+	for(int i = 0; i < this->nr_bases; i++) {
+		this->sigmas.push_back(in_sigmas[i]);
+	}
+
+	this->sigmas[0] = in_sigmas[0];
+	this->sigmas[1] = in_sigmas[1];
+
 	this->pattern[0] = in_pattern[0];
 	this->pattern[1] = in_pattern[1];
 	this->pattern[2] = in_pattern[2];
@@ -221,7 +232,7 @@ void Reconstruction::make_pinv_im() {
 	}
 }
 
-void Reconstruction::extract_signal() {
+void Reconstruction::extract_signal_GPU() {
 	cudaEvent_t start, stop;
 	cudaError_t cudaStatus;
 	cudaEventCreate(&start);
@@ -243,11 +254,11 @@ void Reconstruction::extract_signal() {
 	for (int q = 0; q < this->nr_bases; q++) {
 		dev_pinv_im.upload(this->pinv_ims[q]);
 
-		for (int i = 0; i < im_slices; i++) {
+		for (int i = 0; i < this->im_slices; i++) {
 			Mat rawdata(this->im_rows, this->im_cols, CV_16U, this->raw_data_ptr[i]);
 			Mat coeffs(this->grid_rows, this->grid_cols, CV_32F, this->coeffs_ptrs[q][i]);
 			dev_data.upload(rawdata);
-
+			dev_coeff.setTo(Scalar(0));
 
 			cudaEventRecord(start);
 			GPU_signal_extraction << < grid, block >> > (dev_data.data, dev_coeff.data, dev_ss_row.data, dev_ss_col.data, dev_pinv_im.data, im_rows, im_cols, dev_data.step, dev_ss_row.step, dev_ss_col.step, dev_pinv_im.step, dev_coeff.step);
@@ -261,4 +272,23 @@ void Reconstruction::extract_signal() {
 
 	}
 	this->cudaStatus = cudaEventElapsedTime(&this->elapsed, start, stop);
+}
+
+void Reconstruction::extract_signal_CPU() {
+	uint16_t ci, cj;
+
+	for (int q = 0; q < this->nr_bases; q++) {
+		for (int s = 0; s < this->im_slices; s++) {
+			Mat rawdata(this->im_rows, this->im_cols, CV_16U, this->raw_data_ptr[s]);
+			Mat coeffs(this->grid_rows, this->grid_cols, CV_32F, this->coeffs_ptrs[q][s]);
+
+			for (int i = 0; i < this->im_rows; i++) {
+				for (int j = 0; j < this->im_cols; j++) {
+					ci = ss_row.at<uint16_t>(i, j);
+					cj = ss_col.at<uint16_t>(i, j);
+					coeffs.at<float>(ci, cj) += this->pinv_ims[q].at<float>(i, j) * rawdata.at<uint16_t>(i, j);
+				}
+			}
+		}
+	}
 }

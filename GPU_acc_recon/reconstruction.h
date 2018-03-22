@@ -11,14 +11,15 @@ using namespace std;
 class Reconstruction
 {
 public:
-	Reconstruction(const int, const int, const int, const int, float*, float*, uchar**, vector<vector<Mat>>*);
-	Reconstruction(const int, const int, const int, const int, float*, float*, uchar**, uchar***);
+	Reconstruction(const int, const int, const int, float*, const int, float*, uchar**, vector<vector<Mat>>*);
+	Reconstruction(const int, const int, const int, float*, const int, float*, uchar**, uchar***);
 	~Reconstruction();
 
 	void make_subsquares();
 	void make_bases_im();
 	void make_pinv_im();
-	void extract_signal();
+	void extract_signal_GPU();
+	void extract_signal_CPU();
 	
 	float elapsed;
 	cudaError_t cudaStatus;
@@ -44,8 +45,8 @@ private:
 	vector<int> ss_col_end;
 
 	//------Model-------
-	int nr_bases = 2;
-	float sigmas[2] = {3.2f, 20.0f};
+	int nr_bases;
+	vector<float> sigmas;
 
 	vector<Mat> bases_ims;
 	vector<Mat> pinv_ims;

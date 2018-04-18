@@ -51,11 +51,9 @@ def load_data(datapath):
     return data
 
 def make_3d_ptr_array(in_data):
-
+    assert len(np.shape(in_data)) == 3, 'Trying to make 3D pointer array out of non-3D data'
     data = in_data
     slices = data.shape[0]
-    rows = data.shape[1]
-    cols = data.shape[2]
             
     pyth_ptr_array = []
 
@@ -67,12 +65,10 @@ def make_3d_ptr_array(in_data):
     return c_ptr_array
     
 def make_4d_ptr_array(in_data):
-    
+    assert len(np.shape(in_data)) == 4, 'Trying to make 4D pointer array out of non-4D data'
     data = in_data
     groups = data.shape[0]
     slices = data.shape[1]
-    rows = data.shape[2]
-    cols = data.shape[3]
     
     pyth_ptr_array = []
     
@@ -115,7 +111,7 @@ def reconstruct(coeffs, square_side, row_dir, col_dir):
 
 def run_recon(sigmas, mode):
     cdll.LoadLibrary(os.environ['CUDA_PATH_V9_0'] + '\\bin\\cudart64_90.dll') # This is needed by the DLL containing CUDA code.
-    GPUdll = cdll.LoadLibrary('GPU_acc_recon.dll')
+    ReconstructionDLL = cdll.LoadLibrary('GPU_acc_recon.dll')
     
     if not 'data' in globals():
         print('Loading data...')
@@ -141,7 +137,7 @@ def run_recon(sigmas, mode):
     c_im_slices = c_int(data.shape[0])
     
     print('Calculating grid...')
-    GPUdll.calc_coeff_grid_size(c_im_rows, c_im_cols, byref(c_grid_rows), byref(c_grid_cols), byref(c_pattern))
+    ReconstructionDLL.calc_coeff_grid_size(c_im_rows, c_im_cols, byref(c_grid_rows), byref(c_grid_cols), byref(c_pattern))
     
     res_coeffs = np.zeros(dtype=np.float32, shape=(c_nr_bases.value, c_im_slices.value, c_grid_rows.value, c_grid_cols.value))
     res_ptr = make_4d_ptr_array(res_coeffs)
@@ -149,10 +145,10 @@ def run_recon(sigmas, mode):
     t = time.time()
     if mode == 'cpu':
         print('Extracting signal on CPU...')
-        GPUdll.extract_signal_CPU(c_im_rows, c_im_cols, c_im_slices, byref(c_pattern), c_nr_bases, byref(c_sigmas), byref(data_ptr_array), byref(res_ptr))
+        ReconstructionDLL.extract_signal_CPU(c_im_rows, c_im_cols, c_im_slices, byref(c_pattern), c_nr_bases, byref(c_sigmas), byref(data_ptr_array), byref(res_ptr))
     elif mode == 'gpu':
         print('Extracting signal on GPU...')
-        GPUdll.extract_signal_GPU(c_im_rows, c_im_cols, c_im_slices, byref(c_pattern), c_nr_bases, byref(c_sigmas), byref(data_ptr_array), byref(res_ptr))
+        ReconstructionDLL.extract_signal_GPU(c_im_rows, c_im_cols, c_im_slices, byref(c_pattern), c_nr_bases, byref(c_sigmas), byref(data_ptr_array), byref(res_ptr))
     elapsed = time.time() - t
     print('Signal extraction perfomrmed in', elapsed, 'seconds')
     return res_coeffs

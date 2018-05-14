@@ -11,6 +11,7 @@
 *.hdf5
 *.h5
 *.tif
+*.tiff
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs

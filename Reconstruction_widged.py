@@ -13,12 +13,13 @@ import pyqtgraph as pg
 from ctypes import *
 import os
 import h5py
+import tifffile as tiff
 import time
 
 class ReconParTree(ParameterTree):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
         # Parameter tree for the reconstruction
         params = [{'name': 'Pixel size', 'type': 'float', 'value': 65, 'suffix': 'nm'},
                   {'name': 'CPU/GPU', 'type': 'list', 'values': ['GPU', 'CPU']},
@@ -37,30 +38,30 @@ class ReconParTree(ParameterTree):
             {'name': 'Load data', 'type': 'action'},
             {'name': 'Show pattern', 'type': 'bool'},
             {'name': 'Reconstruct', 'type': 'action'}]
-        
+
         self.p = Parameter.create(name='params', type='group', children=params)
         self.setParameters(self.p, showTop=False)
         self._writable = True
-    
-    
+
+
 class ReconWid(QtGui.QMainWindow):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
         self.datapath = r'Test_data\04_pr.hdf5'
         self.reconstructor = Reconstructor('GPU_acc_recon.dll')
         self.data_frame = Data_Frame()
         self.recon_frame = Recon_Frame()
-        
-        
+
+
         self.partree = ReconParTree()
 
         parameterFrame = QtGui.QFrame()
         parameterGrid = QtGui.QGridLayout()
         parameterFrame.setLayout(parameterGrid)
         parameterGrid.addWidget(self.partree, 0, 0)
-        
-        
+
+
         layout = QtGui.QGridLayout()
         self.cwidget = QtGui.QWidget()
         self.setCentralWidget(self.cwidget)
@@ -72,7 +73,7 @@ class ReconWid(QtGui.QMainWindow):
 #        layout.setRowMinimumHeight(0, 550)
 
         layout.addWidget(parameterFrame, 0, 0)
-        layout.addWidget(self.data_frame, 0, 1)        
+        layout.addWidget(self.data_frame, 0, 1)
         layout.addWidget(self.recon_frame, 1, 0, 1, 2)
         pg.setConfigOption('imageAxisOrder', 'row-major')
 
@@ -82,13 +83,13 @@ class ReconWid(QtGui.QMainWindow):
         self.show_pat_bool.sigStateChanged.connect(self.toggle_pattern)
         self.load_btn = self.partree.p.param('Load data')
         self.load_btn.sigStateChanged.connect(self.load_data)
-        
+
         self.update_pattern()
         self.partree.p.param('Pattern').sigTreeStateChanged.connect(self.update_pattern)
-    
+
     def test(self):
         print('Test fcn run')
-    
+
     def toggle_pattern(self):
         print('Toggling pattern')
         if self.show_pat_bool.value():
@@ -96,7 +97,7 @@ class ReconWid(QtGui.QMainWindow):
             self.data_frame.show_pat = True
         else:
             self.data_frame.show_pat = False
-    
+
     def update_pattern(self):
         print('Updating pattern')
         pattern_pars = self.partree.p.param('Pattern')
@@ -104,21 +105,33 @@ class ReconWid(QtGui.QMainWindow):
            pattern_pars.param('Y-offset').value(),
            pattern_pars.param('X-period').value(),
            pattern_pars.param('Y-period').value()]
-        
+
         if self.data_frame.show_pat:
             print('Update pattern grid')
             self.data_frame.pattern = self.pattern
             self.data_frame.make_pattern_grid()
-            
+
     def load_data(self):
         dlg = QtGui.QFileDialog()
         datapath = dlg.getOpenFileName()[0]
         print('Loading data at:', datapath)
-        datafile = h5py.File(datapath, 'r')
+
+        ext = os.path.splitext(datapath)[1]
+
+        if ext in ['.hdf5', '.hdf']:
+            with h5py.File(datapath, 'r') as datafile:
+                data = np.array(datafile['data'][:])
+
+        elif ext in ['.tiff', '.tif']:
+            with tiff.TiffFile(datapath) as datafile:
+                data = datafile.asarray()
+
+        self.data_frame.setData(data)
+
+        return data
+
         print('Data loaded')
-        data = np.array(datafile['data'][:])
-        self.data_frame.setData(data)        
-        
+
     def run_reconstruction(self):
         print('Running reconstruction')
         recon_pars = self.partree.p.param('Reconstruction options')
@@ -129,7 +142,7 @@ class ReconWid(QtGui.QMainWindow):
             print('In Gasussian version')
             sigmas_nm = np.append(sigmas_nm, recon_pars.param('BG modelling').param('BG Gaussian size').value())
             print('Appended to sigmas')
-    
+
         sigmas = np.divide(sigmas_nm, self.partree.p.param('Pixel size').value())
 
         scan_par = self.partree.p.param('Scanning')
@@ -139,7 +152,7 @@ class ReconWid(QtGui.QMainWindow):
             self.recon_images = self.reconstructor.reconstruct(self.data_frame.data, sigmas, self.pattern, dim1, dim2, 'cpu')
         elif self.partree.p.param('CPU/GPU').value() == 'GPU':
             self.recon_images = self.reconstructor.reconstruct(self.data_frame.data, sigmas, self.pattern, dim1, dim2, 'gpu')
-        
+
         print('Recieved images')
         self.recon_frame.update(self.recon_images[0])
 
@@ -147,7 +160,7 @@ class ReconWid(QtGui.QMainWindow):
 class Data_Frame(QtGui.QFrame):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
         self.data = []
         self.mean_data = []
         self.pattern = []
@@ -166,38 +179,38 @@ class Data_Frame(QtGui.QFrame):
         self.show_mean_btn = QtGui.QPushButton()
         self.show_mean_btn.setText('Show mean image')
         self.show_mean_btn.pressed.connect(self.show_mean)
-        
+
         frame_label = QtGui.QLabel('Frame # ')
         self.frame_nr = QtGui.QLineEdit('0')
         self.frame_nr.textChanged.connect(self.setImgSlice)
         self.frame_nr.setFixedWidth(45)
-        
+
         self.slider = QtGui.QSlider(QtCore.Qt.Horizontal, self)
         self.slider.setMinimum(0)
         self.slider.setMaximum(np.shape(self.data)[0])
         self.slider.setTickInterval(5)
         self.slider.setSingleStep(1)
         self.slider.valueChanged[int].connect(self.slider_moved)
-        
+
         self.pattern_scatter = pg.ScatterPlotItem()
-        self.pattern_scatter.setData(pos=[[0, 0], [10, 10], [20, 20], [30, 30],[40, 40]], 
+        self.pattern_scatter.setData(pos=[[0, 0], [10, 10], [20, 20], [30, 30],[40, 40]],
                                      pen=pg.mkPen(color=(255, 0, 0), width=0.5,style=QtCore.Qt.SolidLine, antialias=True),
                                      brush=pg.mkBrush(color=(255, 0, 0), antialias=True),
                                      size=1,
                                      pxMode=False)
-        
+
         layout = QtGui.QGridLayout()
-        self.setLayout(layout)        
-        
+        self.setLayout(layout)
+
         layout.addWidget(self.show_mean_btn, 0, 0)
         layout.addWidget(self.slider, 0, 1)
         layout.addWidget(frame_label, 0, 2)
         layout.addWidget(self.frame_nr, 0, 3)
         layout.addWidget(imageWidget, 1, 0, 1, 4)
-        
+
         self._show_pat = False
         self.pat_grid_made = False
-        
+
     @property
     def show_pat(self):
         return self._show_pat
@@ -217,29 +230,29 @@ class Data_Frame(QtGui.QFrame):
     def slider_moved(self):
         self.frame_nr.setText(str(self.slider.value()))
         self.setImgSlice()
-        
+
     def setImgSlice(self):
         try:
             i = int(self.frame_nr.text())
         except TypeError:
             print('ERROR: Input must be an integer value')
-            
+
         self.slider.setValue(i)
         self.img.setImage(self.data[i])
         self.frame_nr.setText(str(i))
-    
+
     def show_mean(self):
         self.img.setImage(self.mean_data)
-    
+
     def setData(self, in_data):
         self.data = in_data
         self.mean_data = np.array(np.mean(self.data, 0), dtype=np.float32)
         self.show_mean()
         self.slider.setMaximum(np.shape(self.data)[0])
-        
+
     def make_pattern_grid(self):
         #Pattern is now [Row-offset, Col-offset, Row-period, Col-period] where offser is
-        #calculated from the upper left corner (0, 0), while the scatter plot 
+        #calculated from the upper left corner (0, 0), while the scatter plot
         #plots from lower left corner, so a flip has to be made in columns
         nr_cols = np.size(self.data, 1)
         nr_rows = np.size(self.data, 2)
@@ -253,12 +266,12 @@ class Data_Frame(QtGui.QFrame):
         self.pattern_scatter.setData(x=self.pattern_grid[0], y=self.pattern_grid[1])
         self.pat_grid_made = True
         print('Made new pattern grid')
-        
-        
+
+
 class Recon_Frame(QtGui.QFrame):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
         # Image Widget
         imageWidget = pg.GraphicsLayoutWidget()
         self.img_vb = imageWidget.addViewBox(row=0, col=0)
@@ -271,29 +284,29 @@ class Recon_Frame(QtGui.QFrame):
         self.img_hist = pg.HistogramLUTItem(image=self.img)
 #        self.hist.vb.setLimits(yMin=0, yMax=2048)
         imageWidget.addItem(self.img_hist, row=0, col=1)
-        
+
         layout = QtGui.QGridLayout()
         self.setLayout(layout)
-        
+
         layout.addWidget(imageWidget, 0, 0)
-        
+
 
     def update(self, image):
         self.img.setImage(image)
-        
+
 class Reconstructor(object):
     def __init__(self, dll_path, *args, **kwargs):
         super().__init__(*args, **kwargs)
         cdll.LoadLibrary(os.environ['CUDA_PATH_V9_0'] + '\\bin\\cudart64_90.dll') # This is needed by the DLL containing CUDA code.
         self.ReconstructionDLL = cdll.LoadLibrary(dll_path)
-        
+
         self.data_shape_msg = QtGui.QMessageBox()
         self.data_shape_msg.setText("Data does not have the shape of a square scan!")
         self.data_shape_msg.setInformativeText("Do you want to append the data with tha last frame to enable reconstruction?")
         self.data_shape_msg.setStandardButtons(QtGui.QMessageBox.Yes | QtGui.QMessageBox.No)
-    
+
     def reconstruct(self, data, sigmas, pattern, dim1, dim2, dev):
-        
+
         c = self.extract_signal(data, sigmas, pattern, dev)
         print('Back in reconstruct func')
         frames = np.shape(c)[1]
@@ -307,52 +320,52 @@ class Reconstructor(object):
                         c[i][-(1+j)] = c[i][-(1+missing)]
                 print('Appended data with last frame new shape of c = ', np.shape(c))
         frames = np.shape(c)[1]
-        
-        images = [self.coeffs_to_image(c[0], 
-                                       np.int(np.sqrt(frames)), 
-                                       dim1, 
+
+        images = [self.coeffs_to_image(c[0],
+                                       np.int(np.sqrt(frames)),
+                                       dim1,
                                        dim2) for i in range(0, len(sigmas))]
-        
+
         return images
-        
+
     def make_3d_ptr_array(self, in_data):
         print('In make_3D_ptr_array')
         print('In make_3D_ptr_array with data dimensions:', len(np.shape(in_data)))
         assert len(np.shape(in_data)) == 3, 'Trying to make 3D pointer array out of non-3D data'
         data = in_data
         slices = data.shape[0]
-                
+
         pyth_ptr_array = []
-    
+
         for j in np.arange(0, slices):
             ptr = data[j].ctypes.data_as(POINTER(c_ubyte))
-            pyth_ptr_array.append(ptr) 
+            pyth_ptr_array.append(ptr)
         c_ptr_array = (POINTER(c_ubyte)*slices)(*pyth_ptr_array)
         print('Finished creating 3D pointer array')
         return c_ptr_array
-        
+
     def make_4d_ptr_array(self, in_data):
         assert len(np.shape(in_data)) == 4, 'Trying to make 4D pointer array out of non-4D data'
         data = in_data
         groups = data.shape[0]
         slices = data.shape[1]
-        
+
         pyth_ptr_array = []
-        
+
         for i in np.arange(0, groups):
             temp_p_ptr_array = []
             for j in np.arange(0, slices):
                 ptr = data[i][j].ctypes.data_as(POINTER(c_ubyte))
-                temp_p_ptr_array.append(ptr) 
+                temp_p_ptr_array.append(ptr)
             temp_c_ptr_array = (POINTER(c_ubyte)*slices)(*temp_p_ptr_array)
             pyth_ptr_array.append(cast(temp_c_ptr_array, POINTER(c_ubyte)))
         c_ptr_array = (POINTER(c_ubyte)*groups)(*pyth_ptr_array)
-        
+
         return c_ptr_array
-    
+
     def add_grid_of_coeffs(self, im, coeffs, r0, c0, p):
         im[r0::p,c0::p] = coeffs
-        
+
     def coeffs_to_image(self, coeffs, square_side, row_dir, col_dir):
         im = np.zeros([square_side*np.shape(coeffs)[1], square_side*np.shape(coeffs)[2]])
         front_back = row_dir
@@ -362,12 +375,12 @@ class Reconstructor(object):
                 front_back = 1-front_back
             r0 = (col_dir)*int(i/square_side) + (1-col_dir)*(square_side-1-int(i/square_side))
             c0 = front_back*step + (1-front_back)*(square_side-1-step)
-            
+
             self.add_grid_of_coeffs(im, coeffs[i], r0, c0, square_side)
-            
+
         return im
-                
-    
+
+
     def extract_signal(self, data, sigmas, pattern, dev):
 
         data_ptr_array = self.make_3d_ptr_array(data)
@@ -380,11 +393,11 @@ class Reconstructor(object):
         c_sigmas = np.ctypeslib.as_ctypes(sigmas) #s(1, 10)
         c_grid_rows = c_int(0)
         c_grid_cols = c_int(0)
-        
+
         c_im_rows = c_int(data.shape[1])
         c_im_cols = c_int(data.shape[2])
         c_im_slices = c_int(data.shape[0])
-        
+
         self.ReconstructionDLL.calc_coeff_grid_size(c_im_rows, c_im_cols, byref(c_grid_rows), byref(c_grid_cols), byref(c_pattern))
         res_coeffs = np.zeros(dtype=np.float32, shape=(c_nr_bases.value, c_im_slices.value, c_grid_rows.value, c_grid_cols.value))
         res_ptr = self.make_4d_ptr_array(res_coeffs)
@@ -395,19 +408,19 @@ class Reconstructor(object):
             self.ReconstructionDLL.extract_signal_GPU(c_im_rows, c_im_cols, c_im_slices, byref(c_pattern), c_nr_bases, byref(c_sigmas), byref(data_ptr_array), byref(res_ptr))
         elapsed = time.time() - t
         print('Signal extraction performed in', elapsed, 'seconds')
-        return res_coeffs 
+        return res_coeffs
 
 class pattern_finder(object):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
     def find_pattern(self, image):
         nr_rows = np.size(image, 1)
         nr_cols = np.size(image, 2)
         r = np.linspace(0, nr_cols-1, nr_cols)
         c = np.linspace(0, nr_rows-1, nr_rows)
         self.cm, self.rm = np.meshgrid(c, r)
-    
+
     def make_ref(self, pattern):
         ref = np.cos(self.cm)*np.cos(self.rm)
         plt.imshow(ref)
@@ -416,8 +429,8 @@ def show_im_seq(seq):
     for i in np.arange(seq.shape[0]):
         plt.imshow(seq[i], 'gray')
         plt.pause(0.01)
-        
+
 if __name__ == "__main__":
-    
+
     wid = ReconWid()
-    wid.show()    
+    wid.show()

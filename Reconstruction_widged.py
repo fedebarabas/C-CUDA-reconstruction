@@ -10,11 +10,45 @@ import matplotlib.pyplot as plt
 from pyqtgraph.Qt import QtCore, QtGui
 from pyqtgraph.parametertree import Parameter, ParameterTree
 import pyqtgraph as pg
-from ctypes import *
+import ctypes
 import os
 import h5py
 import tifffile as tiff
 import time
+
+# Recipy from:
+# https://code.activestate.com/recipes/460509-get-the-actual-and-usable-sizes-of-all-the-monitor/
+user = ctypes.windll.user32
+
+
+class RECT(ctypes.Structure):
+    _fields_ = [
+            ('left', ctypes.c_long),
+            ('top', ctypes.c_long),
+            ('right', ctypes.c_long),
+            ('bottom', ctypes.c_long)
+            ]
+
+    def dump(self):
+        return map(int, (self.left, self.top, self.right, self.bottom))
+
+
+def n_monitors():
+    retval = []
+    CBFUNC = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong,
+                                ctypes.POINTER(RECT), ctypes.c_double)
+
+    def cb(hMonitor, hdcMonitor, lprcMonitor, dwData):
+        r = lprcMonitor.contents
+        data = [hMonitor]
+        data.append(r.dump())
+        retval.append(data)
+        return 1
+    cbfunc = CBFUNC(cb)
+    temp = user.EnumDisplayMonitors(0, 0, cbfunc, 0)
+
+    return len(retval)
+
 
 class ReconParTree(ParameterTree):
     def __init__(self, *args, **kwargs):
@@ -55,7 +89,6 @@ class ReconWid(QtGui.QMainWindow):
         self.data_frame = Data_Frame()
         self.recon_frame = Recon_Frame()
 
-
         self.partree = ReconParTree()
 
         parameterFrame = QtGui.QFrame()
@@ -63,20 +96,21 @@ class ReconWid(QtGui.QMainWindow):
         parameterFrame.setLayout(parameterGrid)
         parameterGrid.addWidget(self.partree, 0, 0)
 
-
         layout = QtGui.QGridLayout()
         self.cwidget = QtGui.QWidget()
         self.setCentralWidget(self.cwidget)
         self.cwidget.setLayout(layout)
 
-        layout.setColumnMinimumWidth(0, 250)
-        layout.setColumnMinimumWidth(1, 1300)
-#        layout.setColumnMinimumWidth(2, 500)
-#        layout.setRowMinimumHeight(0, 550)
+        if n_monitors() == 1:
+            layout.setColumnMinimumWidth(0, 500)
+            layout.setColumnMinimumWidth(1, 1500)
+            layout.setRowMinimumHeight(0, 500)
+            layout.setRowMinimumHeight(1, 500)
 
-        layout.addWidget(parameterFrame, 0, 0)
-        layout.addWidget(self.data_frame, 0, 1)
-        layout.addWidget(self.recon_frame, 1, 0, 1, 2)
+            layout.addWidget(parameterFrame, 0, 0)
+            layout.addWidget(self.data_frame, 1, 0)
+            layout.addWidget(self.recon_frame, 0, 1, 2, 1)
+
         pg.setConfigOption('imageAxisOrder', 'row-major')
 
         self.reconstruct_btn = self.partree.p.param('Reconstruct')
@@ -294,15 +328,18 @@ class Recon_Frame(QtGui.QFrame):
 
         layout.addWidget(imageWidget, 0, 0)
 
-
     def update(self, image):
         self.img.setImage(image)
+
 
 class Reconstructor(object):
     def __init__(self, dll_path, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        cdll.LoadLibrary(os.environ['CUDA_PATH_V9_0'] + '\\bin\\cudart64_90.dll') # This is needed by the DLL containing CUDA code.
-        self.ReconstructionDLL = cdll.LoadLibrary(dll_path)
+
+        # This is needed by the DLL containing CUDA code.
+#        ctypes.cdll.LoadLibrary(os.environ['CUDA_PATH_V9_0'] + '\\bin\\cudart64_90.dll')
+        ctypes.cdll.LoadLibrary(os.path.join(os.getcwd(), 'cudart64_90.dll'))
+        self.ReconstructionDLL = ctypes.cdll.LoadLibrary(dll_path)
 
         self.data_shape_msg = QtGui.QMessageBox()
         self.data_shape_msg.setText("Data does not have the shape of a square scan!")
@@ -380,7 +417,7 @@ class Reconstructor(object):
 
                 r0 = (col_dir)*int(i/square_side) + (1-col_dir)*(square_side-1-int(i/square_side))
                 c0 = row_dir*step + (1-row_dir)*(square_side-1-step)
-                
+
                 if fliprc:
                     self.add_grid_of_coeffs(im, coeffs[i], c0, r0, square_side)
                 else:
@@ -393,7 +430,7 @@ class Reconstructor(object):
                     front_back = 1-front_back
                 r0 = (col_dir)*int(i/square_side) + (1-col_dir)*(square_side-1-int(i/square_side))
                 c0 = front_back*step + (1-front_back)*(square_side-1-step)
-    
+
                 if fliprc:
                     self.add_grid_of_coeffs(im, coeffs[i], c0, r0, square_side)
                 else:

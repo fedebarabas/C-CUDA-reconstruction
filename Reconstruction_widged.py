@@ -34,7 +34,9 @@ class ReconParTree(ParameterTree):
                     {'name': 'BG Gaussian size', 'type': 'float', 'value': 500, 'suffix': 'nm'}]}]},
                 {'name': 'Scanning', 'type': 'group', 'children': [
             {'name': 'Dim 1', 'type': 'list', 'values': ['0', '1']},
-            {'name': 'Dim 2', 'type': 'list', 'values': ['0', '1']}]},
+            {'name': 'Dim 2', 'type': 'list', 'values': ['0', '1']},
+            {'name': 'Unidirection', 'type': 'list', 'values': ['0', '1']},
+            {'name': 'Flip row/col', 'type': 'list', 'values': ['0', '1']}]},
             {'name': 'Load data', 'type': 'action'},
             {'name': 'Show pattern', 'type': 'bool'},
             {'name': 'Reconstruct', 'type': 'action'}]
@@ -148,10 +150,12 @@ class ReconWid(QtGui.QMainWindow):
         scan_par = self.partree.p.param('Scanning')
         dim1 = np.int(scan_par.param('Dim 1').value())
         dim2 = np.int(scan_par.param('Dim 2').value())
+        uni_dir = np.int(scan_par.param('Unidirection').value())
+        fliprc = np.int(scan_par.param('Flip row/col').value())
         if self.partree.p.param('CPU/GPU').value() == 'CPU':
-            self.recon_images = self.reconstructor.reconstruct(self.data_frame.data, sigmas, self.pattern, dim1, dim2, 'cpu')
+            self.recon_images = self.reconstructor.reconstruct(self.data_frame.data, sigmas, self.pattern, dim1, dim2, uni_dir, fliprc, 'cpu')
         elif self.partree.p.param('CPU/GPU').value() == 'GPU':
-            self.recon_images = self.reconstructor.reconstruct(self.data_frame.data, sigmas, self.pattern, dim1, dim2, 'gpu')
+            self.recon_images = self.reconstructor.reconstruct(self.data_frame.data, sigmas, self.pattern, dim1, dim2, uni_dir, fliprc, 'gpu')
 
         print('Recieved images')
         self.recon_frame.update(self.recon_images[0])
@@ -305,7 +309,7 @@ class Reconstructor(object):
         self.data_shape_msg.setInformativeText("Do you want to append the data with tha last frame to enable reconstruction?")
         self.data_shape_msg.setStandardButtons(QtGui.QMessageBox.Yes | QtGui.QMessageBox.No)
 
-    def reconstruct(self, data, sigmas, pattern, dim1, dim2, dev):
+    def reconstruct(self, data, sigmas, pattern, dim1, dim2, uni_dir, fliprc, dev):
 
         c = self.extract_signal(data, sigmas, pattern, dev)
         print('Back in reconstruct func')
@@ -324,7 +328,9 @@ class Reconstructor(object):
         images = [self.coeffs_to_image(c[0],
                                        np.int(np.sqrt(frames)),
                                        dim1,
-                                       dim2) for i in range(0, len(sigmas))]
+                                       dim2,
+                                       uni_dir,
+                                       fliprc) for i in range(0, len(sigmas))]
 
         return images
 
@@ -366,17 +372,32 @@ class Reconstructor(object):
     def add_grid_of_coeffs(self, im, coeffs, r0, c0, p):
         im[r0::p,c0::p] = coeffs
 
-    def coeffs_to_image(self, coeffs, square_side, row_dir, col_dir):
+    def coeffs_to_image(self, coeffs, square_side, row_dir, col_dir, uni_dir, fliprc):
         im = np.zeros([square_side*np.shape(coeffs)[1], square_side*np.shape(coeffs)[2]])
-        front_back = row_dir
-        for i in np.arange(np.shape(coeffs)[0]):
-            step = np.mod(i, square_side)
-            if step == 0:
-                front_back = 1-front_back
-            r0 = (col_dir)*int(i/square_side) + (1-col_dir)*(square_side-1-int(i/square_side))
-            c0 = front_back*step + (1-front_back)*(square_side-1-step)
+        if uni_dir:
+            for i in np.arange(np.shape(coeffs)[0]):
+                step = np.mod(i, square_side)
 
-            self.add_grid_of_coeffs(im, coeffs[i], r0, c0, square_side)
+                r0 = (col_dir)*int(i/square_side) + (1-col_dir)*(square_side-1-int(i/square_side))
+                c0 = row_dir*step + (1-row_dir)*(square_side-1-step)
+                
+                if fliprc:
+                    self.add_grid_of_coeffs(im, coeffs[i], c0, r0, square_side)
+                else:
+                    self.add_grid_of_coeffs(im, coeffs[i], r0, c0, square_side)
+        else:
+            front_back = row_dir
+            for i in np.arange(np.shape(coeffs)[0]):
+                step = np.mod(i, square_side)
+                if step == 0:
+                    front_back = 1-front_back
+                r0 = (col_dir)*int(i/square_side) + (1-col_dir)*(square_side-1-int(i/square_side))
+                c0 = front_back*step + (1-front_back)*(square_side-1-step)
+    
+                if fliprc:
+                    self.add_grid_of_coeffs(im, coeffs[i], c0, r0, square_side)
+                else:
+                    self.add_grid_of_coeffs(im, coeffs[i], r0, c0, square_side)
 
         return im
 

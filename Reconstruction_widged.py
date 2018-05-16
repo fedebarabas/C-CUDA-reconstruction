@@ -5,16 +5,19 @@ Created on Fri Feb 16 11:56:03 2018
 @author: andreas.boden
 """
 
+import os
+import sys
+import time
+
 import numpy as np
 import matplotlib.pyplot as plt
 from pyqtgraph.Qt import QtCore, QtGui
 from pyqtgraph.parametertree import Parameter, ParameterTree
 import pyqtgraph as pg
+
 import ctypes
-import os
 import h5py
 import tifffile as tiff
-import time
 
 # Recipy from:
 # https://code.activestate.com/recipes/460509-get-the-actual-and-usable-sizes-of-all-the-monitor/
@@ -55,23 +58,25 @@ class ReconParTree(ParameterTree):
         super().__init__(*args, **kwargs)
 
         # Parameter tree for the reconstruction
-        params = [{'name': 'Pixel size', 'type': 'float', 'value': 65, 'suffix': 'nm'},
-                  {'name': 'CPU/GPU', 'type': 'list', 'values': ['GPU', 'CPU']},
-                {'name': 'Pattern', 'type': 'group', 'children': [
-            {'name': 'X-offset', 'type': 'float', 'value': 7.8875, 'limits': (0, 9999)},
-            {'name': 'Y-offset', 'type': 'float', 'value': 6.3525, 'limits': (0, 9999)},
-            {'name': 'X-period', 'type': 'float', 'value': 11.5307, 'limits': (0, 9999)},
-            {'name': 'Y-period', 'type': 'float', 'value': 11.5224, 'limits': (0, 9999)}]},
-                {'name': 'Reconstruction options', 'type': 'group', 'children': [
-            {'name': 'PSF size', 'type': 'float', 'value': 250, 'limits': (0,9999), 'suffix': 'nm'},
-            {'name': 'BG modelling', 'type': 'list', 'values': ['Constant', 'Gaussian'], 'children': [
+        params = [
+            {'name': 'Pixel size', 'type': 'float', 'value': 65, 'suffix': 'nm'},
+            {'name': 'CPU/GPU', 'type': 'list', 'values': ['GPU', 'CPU']},
+            {'name': 'Pattern', 'type': 'group', 'children': [
+                {'name': 'X-offset', 'type': 'float', 'value': 7.8875, 'limits': (0, 9999)},
+                {'name': 'Y-offset', 'type': 'float', 'value': 6.3525, 'limits': (0, 9999)},
+                {'name': 'X-period', 'type': 'float', 'value': 11.5307, 'limits': (0, 9999)},
+                {'name': 'Y-period', 'type': 'float', 'value': 11.5224, 'limits': (0, 9999)}]},
+            {'name': 'Reconstruction options', 'type': 'group', 'children': [
+                {'name': 'PSF size', 'type': 'float', 'value': 250, 'limits': (0,9999), 'suffix': 'nm'},
+                {'name': 'BG modelling', 'type': 'list', 'values': ['Constant', 'Gaussian'], 'children': [
                     {'name': 'BG Gaussian size', 'type': 'float', 'value': 500, 'suffix': 'nm'}]}]},
-                {'name': 'Scanning', 'type': 'group', 'children': [
-            {'name': 'Dim 1', 'type': 'list', 'values': ['0', '1']},
-            {'name': 'Dim 2', 'type': 'list', 'values': ['0', '1']},
-            {'name': 'Unidirection', 'type': 'list', 'values': ['0', '1']},
-            {'name': 'Flip row/col', 'type': 'list', 'values': ['0', '1']}]},
+            {'name': 'Scanning', 'type': 'group', 'children': [
+                {'name': 'Dim 1', 'type': 'list', 'values': ['0', '1']},
+                {'name': 'Dim 2', 'type': 'list', 'values': ['0', '1']},
+                {'name': 'Unidirection', 'type': 'list', 'values': ['0', '1']},
+                {'name': 'Flip row/col', 'type': 'list', 'values': ['0', '1']}]},
             {'name': 'Load data', 'type': 'action'},
+            {'name': 'Filename', 'type': 'str', 'readonly': True},
             {'name': 'Show pattern', 'type': 'bool'},
             {'name': 'Reconstruct', 'type': 'action'}]
 
@@ -81,8 +86,17 @@ class ReconParTree(ParameterTree):
 
 
 class ReconWid(QtGui.QMainWindow):
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        # Actions in menubar
+        menubar = self.menuBar()
+        fileMenu = menubar.addMenu('&File')
+        saveReconAction = QtGui.QAction('Save reconstruction', self)
+        saveReconAction.setShortcut('Ctrl+S')
+        saveReconAction.triggered.connect(self.save_reconstruction)
+        fileMenu.addAction(saveReconAction)
 
         self.datapath = r'Test_data\04_pr.hdf5'
         self.reconstructor = Reconstructor('GPU_acc_recon.dll')
@@ -121,7 +135,8 @@ class ReconWid(QtGui.QMainWindow):
         self.load_btn.sigStateChanged.connect(self.load_data)
 
         self.update_pattern()
-        self.partree.p.param('Pattern').sigTreeStateChanged.connect(self.update_pattern)
+        self.partree.p.param('Pattern').sigTreeStateChanged.connect(
+            self.update_pattern)
 
     def test(self):
         print('Test fcn run')
@@ -138,9 +153,9 @@ class ReconWid(QtGui.QMainWindow):
         print('Updating pattern')
         pattern_pars = self.partree.p.param('Pattern')
         self.pattern = [pattern_pars.param('X-offset').value(),
-           pattern_pars.param('Y-offset').value(),
-           pattern_pars.param('X-period').value(),
-           pattern_pars.param('Y-period').value()]
+                        pattern_pars.param('Y-offset').value(),
+                        pattern_pars.param('X-period').value(),
+                        pattern_pars.param('Y-period').value()]
 
         if self.data_frame.show_pat:
             print('Update pattern grid')
@@ -148,21 +163,31 @@ class ReconWid(QtGui.QMainWindow):
             self.data_frame.make_pattern_grid()
 
     def load_data(self):
-        dlg = QtGui.QFileDialog()
-        datapath = dlg.getOpenFileName()[0]
-        print('Loading data at:', datapath)
 
-        ext = os.path.splitext(datapath)[1]
+        # Delete plots of previous data
+        if hasattr(self, 'recon_images'):
+            del self.recon_images
+            self.recon_frame.update(np.zeros((10, 10)))
+
+        dlg = QtGui.QFileDialog()
+        self.datapath = dlg.getOpenFileName()[0]
+        print('Loading data at:', self.datapath)
+
+        ext = os.path.splitext(self.datapath)[1]
 
         if ext in ['.hdf5', '.hdf']:
-            with h5py.File(datapath, 'r') as datafile:
+            with h5py.File(self.datapath, 'r') as datafile:
                 data = np.array(datafile['data'][:])
 
         elif ext in ['.tiff', '.tif']:
-            with tiff.TiffFile(datapath) as datafile:
+            with tiff.TiffFile(self.datapath) as datafile:
                 data = datafile.asarray()
 
         self.data_frame.setData(data)
+
+        name = os.path.split(self.datapath)[1]
+        print(name)
+        self.partree.p.param('Filename').setValue(name)
 
         return data
 
@@ -179,23 +204,48 @@ class ReconWid(QtGui.QMainWindow):
             sigmas_nm = np.append(sigmas_nm, recon_pars.param('BG modelling').param('BG Gaussian size').value())
             print('Appended to sigmas')
 
-        sigmas = np.divide(sigmas_nm, self.partree.p.param('Pixel size').value())
+        sigmas = np.divide(
+            sigmas_nm, self.partree.p.param('Pixel size').value())
 
         scan_par = self.partree.p.param('Scanning')
         dim1 = np.int(scan_par.param('Dim 1').value())
         dim2 = np.int(scan_par.param('Dim 2').value())
         uni_dir = np.int(scan_par.param('Unidirection').value())
         fliprc = np.int(scan_par.param('Flip row/col').value())
+
         if self.partree.p.param('CPU/GPU').value() == 'CPU':
             self.recon_images = self.reconstructor.reconstruct(self.data_frame.data, sigmas, self.pattern, dim1, dim2, uni_dir, fliprc, 'cpu')
         elif self.partree.p.param('CPU/GPU').value() == 'GPU':
             self.recon_images = self.reconstructor.reconstruct(self.data_frame.data, sigmas, self.pattern, dim1, dim2, uni_dir, fliprc, 'gpu')
 
-        print('Recieved images')
+        print('Received images')
+
+        self.recon_images -= np.min(self.recon_images)
+        self.recon_images = self.recon_images.astype(np.uint16)
         self.recon_frame.update(self.recon_images[0])
+
+    def save_reconstruction(self):
+
+        if hasattr(self, 'recon_images'):
+
+            savename = os.path.splitext(self.datapath)[0]
+            pxsize = self.partree.p.param('Pixel size').value()/1000
+
+            # Mean image
+            mean_data = self.data_frame.mean_data
+            tiff.imsave(savename + '_mean.tiff', mean_data, imagej=True,
+                        resolution=(1/pxsize, 1/pxsize),
+                        metadata={'spacing': 1, 'unit': 'um'})
+
+            # Reconstructed image
+            reconstr_data = self.recon_images[0]
+            tiff.imsave(savename + '_reconstructed.tiff', reconstr_data,
+                        imagej=True, resolution=(1/pxsize, 1/pxsize),
+                        metadata={'spacing': 1, 'unit': 'um'})
 
 
 class Data_Frame(QtGui.QFrame):
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -203,6 +253,7 @@ class Data_Frame(QtGui.QFrame):
         self.mean_data = []
         self.pattern = []
         self.pattern_grid = []
+
         # Image Widget
         imageWidget = pg.GraphicsLayoutWidget()
         self.img_vb = imageWidget.addViewBox(row=0, col=0)
@@ -231,11 +282,12 @@ class Data_Frame(QtGui.QFrame):
         self.slider.valueChanged[int].connect(self.slider_moved)
 
         self.pattern_scatter = pg.ScatterPlotItem()
-        self.pattern_scatter.setData(pos=[[0, 0], [10, 10], [20, 20], [30, 30],[40, 40]],
-                                     pen=pg.mkPen(color=(255, 0, 0), width=0.5,style=QtCore.Qt.SolidLine, antialias=True),
-                                     brush=pg.mkBrush(color=(255, 0, 0), antialias=True),
-                                     size=1,
-                                     pxMode=False)
+        self.pattern_scatter.setData(
+            pos=[[0, 0], [10, 10], [20, 20], [30, 30], [40, 40]],
+            pen=pg.mkPen(color=(255, 0, 0), width=0.5,
+                         style=QtCore.Qt.SolidLine, antialias=True),
+            brush=pg.mkBrush(color=(255, 0, 0), antialias=True), size=1,
+            pxMode=False)
 
         layout = QtGui.QGridLayout()
         self.setLayout(layout)
@@ -252,6 +304,7 @@ class Data_Frame(QtGui.QFrame):
     @property
     def show_pat(self):
         return self._show_pat
+
     @show_pat.setter
     def show_pat(self, b_value):
         if b_value:
@@ -284,14 +337,15 @@ class Data_Frame(QtGui.QFrame):
 
     def setData(self, in_data):
         self.data = in_data
-        self.mean_data = np.array(np.mean(self.data, 0), dtype=np.float32)
+        self.mean_data = np.array(np.mean(self.data, 0), dtype=np.uint16)
         self.show_mean()
         self.slider.setMaximum(np.shape(self.data)[0])
 
     def make_pattern_grid(self):
-        #Pattern is now [Row-offset, Col-offset, Row-period, Col-period] where offser is
-        #calculated from the upper left corner (0, 0), while the scatter plot
-        #plots from lower left corner, so a flip has to be made in columns
+        # Pattern is now [Row-offset, Col-offset, Row-period, Col-period] where
+        # offser is calculated from the upper left corner (0, 0), while the
+        # scatter plot plots from lower left corner, so a flip has to be made
+        # in columns
         nr_cols = np.size(self.data, 1)
         nr_rows = np.size(self.data, 2)
         nr_points_col = int(1 + np.floor(((nr_cols - 1) - self.pattern[1]) / self.pattern[3]))
@@ -342,20 +396,25 @@ class Reconstructor(object):
         self.ReconstructionDLL = ctypes.cdll.LoadLibrary(dll_path)
 
         self.data_shape_msg = QtGui.QMessageBox()
-        self.data_shape_msg.setText("Data does not have the shape of a square scan!")
-        self.data_shape_msg.setInformativeText("Do you want to append the data with tha last frame to enable reconstruction?")
-        self.data_shape_msg.setStandardButtons(QtGui.QMessageBox.Yes | QtGui.QMessageBox.No)
+        self.data_shape_msg.setText(
+            "Data does not have the shape of a square scan!")
+        self.data_shape_msg.setInformativeText(
+            "Do you want to append the data with tha last frame to enable "
+            "reconstruction?")
+        self.data_shape_msg.setStandardButtons(QtGui.QMessageBox.Yes |
+                                               QtGui.QMessageBox.No)
 
-    def reconstruct(self, data, sigmas, pattern, dim1, dim2, uni_dir, fliprc, dev):
+    def reconstruct(
+          self, data, sigmas, pattern, dim1, dim2, uni_dir, fliprc, dev):
 
         c = self.extract_signal(data, sigmas, pattern, dev)
         print('Back in reconstruct func')
         frames = np.shape(c)[1]
-        missing = np.power(np.int(np.ceil(np.sqrt(frames))), 2) - frames;
+        missing = np.power(np.int(np.ceil(np.sqrt(frames))), 2) - frames
         print('Calculated missing frames')
         if np.sqrt(frames) != np.round(np.sqrt(frames)):
             if self.data_shape_msg.exec_() == QtGui.QMessageBox.Yes:
-                c = np.pad(c, ((0,0), (0,missing), (0,0), (0,0)), 'constant')
+                c = np.pad(c, ((0, 0), (0, missing), (0, 0), (0, 0)), 'constant')
                 for i in range(0, len(sigmas)):
                     for j in range(0, missing):
                         c[i][-(1+j)] = c[i][-(1+missing)]
@@ -374,21 +433,21 @@ class Reconstructor(object):
     def make_3d_ptr_array(self, in_data):
         print('In make_3D_ptr_array')
         print('In make_3D_ptr_array with data dimensions:', len(np.shape(in_data)))
-        assert len(np.shape(in_data)) == 3, 'Trying to make 3D pointer array out of non-3D data'
+        assert len(np.shape(in_data)) == 3, 'Trying to make 3D ctypes.POINTER array out of non-3D data'
         data = in_data
         slices = data.shape[0]
 
         pyth_ptr_array = []
 
         for j in np.arange(0, slices):
-            ptr = data[j].ctypes.data_as(POINTER(c_ubyte))
+            ptr = data[j].ctypes.data_as(ctypes.POINTER(ctypes.c_ubyte))
             pyth_ptr_array.append(ptr)
-        c_ptr_array = (POINTER(c_ubyte)*slices)(*pyth_ptr_array)
-        print('Finished creating 3D pointer array')
+        c_ptr_array = (ctypes.POINTER(ctypes.c_ubyte)*slices)(*pyth_ptr_array)
+        print('Finished creating 3D ctypes.POINTER array')
         return c_ptr_array
 
     def make_4d_ptr_array(self, in_data):
-        assert len(np.shape(in_data)) == 4, 'Trying to make 4D pointer array out of non-4D data'
+        assert len(np.shape(in_data)) == 4, 'Trying to make 4D ctypes.POINTER array out of non-4D data'
         data = in_data
         groups = data.shape[0]
         slices = data.shape[1]
@@ -398,16 +457,16 @@ class Reconstructor(object):
         for i in np.arange(0, groups):
             temp_p_ptr_array = []
             for j in np.arange(0, slices):
-                ptr = data[i][j].ctypes.data_as(POINTER(c_ubyte))
+                ptr = data[i][j].ctypes.data_as(ctypes.POINTER(ctypes.c_ubyte))
                 temp_p_ptr_array.append(ptr)
-            temp_c_ptr_array = (POINTER(c_ubyte)*slices)(*temp_p_ptr_array)
-            pyth_ptr_array.append(cast(temp_c_ptr_array, POINTER(c_ubyte)))
-        c_ptr_array = (POINTER(c_ubyte)*groups)(*pyth_ptr_array)
+            temp_c_ptr_array = (ctypes.POINTER(ctypes.c_ubyte)*slices)(*temp_p_ptr_array)
+            pyth_ptr_array.append(ctypes.cast(temp_c_ptr_array, ctypes.POINTER(ctypes.c_ubyte)))
+        c_ptr_array = (ctypes.POINTER(ctypes.c_ubyte)*groups)(*pyth_ptr_array)
 
         return c_ptr_array
 
     def add_grid_of_coeffs(self, im, coeffs, r0, c0, p):
-        im[r0::p,c0::p] = coeffs
+        im[r0::p, c0::p] = coeffs
 
     def coeffs_to_image(self, coeffs, square_side, row_dir, col_dir, uni_dir, fliprc):
         im = np.zeros([square_side*np.shape(coeffs)[1], square_side*np.shape(coeffs)[2]])
@@ -438,35 +497,35 @@ class Reconstructor(object):
 
         return im
 
-
     def extract_signal(self, data, sigmas, pattern, dev):
 
         data_ptr_array = self.make_3d_ptr_array(data)
-        p = c_float*4
-        c_pattern = p(pattern[0], pattern[1], pattern[2], pattern[3]); #Minus one due to different (1 or 0) indexing in C/Matlab
-        c_nr_bases = c_int(np.size(sigmas))
-        s = c_float*c_nr_bases.value
+        p = ctypes.c_float*4
+        # Minus one due to different (1 or 0) indexing in C/Matlab
+        c_pattern = p(pattern[0], pattern[1], pattern[2], pattern[3])
+        c_nr_bases = ctypes.c_int(np.size(sigmas))
+        s = ctypes.c_float*c_nr_bases.value
         print('Sigmas = ', sigmas)
         sigmas = np.array(sigmas, dtype=np.float32)
-        c_sigmas = np.ctypeslib.as_ctypes(sigmas) #s(1, 10)
-        c_grid_rows = c_int(0)
-        c_grid_cols = c_int(0)
+        c_sigmas = np.ctypeslib.as_ctypes(sigmas)  # s(1, 10)
+        c_grid_rows = ctypes.c_int(0)
+        c_grid_cols = ctypes.c_int(0)
+        c_im_rows = ctypes.c_int(data.shape[1])
+        c_im_cols = ctypes.c_int(data.shape[2])
+        c_im_slices = ctypes.c_int(data.shape[0])
 
-        c_im_rows = c_int(data.shape[1])
-        c_im_cols = c_int(data.shape[2])
-        c_im_slices = c_int(data.shape[0])
-
-        self.ReconstructionDLL.calc_coeff_grid_size(c_im_rows, c_im_cols, byref(c_grid_rows), byref(c_grid_cols), byref(c_pattern))
+        self.ReconstructionDLL.calc_coeff_grid_size(c_im_rows, c_im_cols, ctypes.byref(c_grid_rows), ctypes.byref(c_grid_cols), ctypes.byref(c_pattern))
         res_coeffs = np.zeros(dtype=np.float32, shape=(c_nr_bases.value, c_im_slices.value, c_grid_rows.value, c_grid_cols.value))
         res_ptr = self.make_4d_ptr_array(res_coeffs)
         t = time.time()
         if dev == 'cpu':
-            self.ReconstructionDLL.extract_signal_CPU(c_im_rows, c_im_cols, c_im_slices, byref(c_pattern), c_nr_bases, byref(c_sigmas), byref(data_ptr_array), byref(res_ptr))
+            self.ReconstructionDLL.extract_signal_CPU(c_im_rows, c_im_cols, c_im_slices, ctypes.byref(c_pattern), c_nr_bases, ctypes.byref(c_sigmas), ctypes.byref(data_ptr_array), ctypes.byref(res_ptr))
         elif dev == 'gpu':
-            self.ReconstructionDLL.extract_signal_GPU(c_im_rows, c_im_cols, c_im_slices, byref(c_pattern), c_nr_bases, byref(c_sigmas), byref(data_ptr_array), byref(res_ptr))
+            self.ReconstructionDLL.extract_signal_GPU(c_im_rows, c_im_cols, c_im_slices, ctypes.byref(c_pattern), c_nr_bases, ctypes.byref(c_sigmas), ctypes.byref(data_ptr_array), ctypes.byref(res_ptr))
         elapsed = time.time() - t
         print('Signal extraction performed in', elapsed, 'seconds')
         return res_coeffs
+
 
 class pattern_finder(object):
     def __init__(self, *args, **kwargs):
@@ -483,12 +542,18 @@ class pattern_finder(object):
         ref = np.cos(self.cm)*np.cos(self.rm)
         plt.imshow(ref)
 
+
 def show_im_seq(seq):
     for i in np.arange(seq.shape[0]):
         plt.imshow(seq[i], 'gray')
         plt.pause(0.01)
 
+
 if __name__ == "__main__":
+
+    app = QtGui.QApplication([])
 
     wid = ReconWid()
     wid.show()
+
+    sys.exit(app.exec_())
